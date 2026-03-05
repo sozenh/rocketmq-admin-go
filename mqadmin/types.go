@@ -4,6 +4,7 @@ import "errors"
 
 type Options struct {
 	NameServer            []string
+	Credentials           Credentials
 	UseTLS                bool
 	TLSServerName         string
 	TLSInsecureSkipVerify bool
@@ -11,6 +12,16 @@ type Options struct {
 	Retry                 int
 	RetryBackoffMs        int
 	BrokerAddrMap         map[string]string
+}
+
+type Credentials struct {
+	AccessKey     string
+	SecretKey     string
+	SecurityToken string
+}
+
+func (c Credentials) Enabled() bool {
+	return c.AccessKey != "" && c.SecretKey != ""
 }
 
 type CreateTopicRequest struct {
@@ -147,6 +158,33 @@ type UserInfo struct {
 type AclInfo struct {
 	Subject  string       `json:"subject"`
 	Policies []PolicyInfo `json:"policies"`
+}
+
+type AclInfoV1 struct {
+	GlobalWhiteAddrs   []string            `json:"globalWhiteAddrs"`
+	PlainAccessConfigs []PlainAccessConfig `json:"plainAccessConfigs"`
+}
+
+type PlainAccessConfig struct {
+	Admin              bool     `json:"admin"`
+	AccessKey          string   `json:"accessKey"`
+	SecretKey          string   `json:"secretKey"`
+	WhiteRemoteAddress string   `json:"whiteRemoteAddress"`
+	TopicPerms         []string `json:"topicPerms"`
+	GroupPerms         []string `json:"groupPerms"`
+	DefaultTopicPerm   string   `json:"defaultTopicPerm"`
+	DefaultGroupPerm   string   `json:"defaultGroupPerm"`
+}
+
+type AclConfigV1 struct {
+	AccessKey          string
+	SecretKey          string
+	WhiteRemoteAddress string
+	DefaultTopicPerm   string
+	DefaultGroupPerm   string
+	Admin              bool
+	TopicPerms         []string
+	GroupPerms         []string
 }
 
 type PolicyInfo struct {

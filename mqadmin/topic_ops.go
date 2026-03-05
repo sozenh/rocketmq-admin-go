@@ -143,7 +143,7 @@ func (c *client) DeleteTopic(ctx context.Context, req DeleteTopicRequest) error 
 		ext["clusterName"] = req.Cluster
 	}
 	for _, ns := range nameSrvs {
-		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeDeleteTopicInNameSrv, toMapString(ext)), c.tlsConfig, c.retry, c.backoff); err != nil {
+		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeDeleteTopicInNameSrv, toMapString(ext)), c.tlsConfig, c.retry, c.backoff, c.creds); err != nil {
 			return err
 		}
 	}

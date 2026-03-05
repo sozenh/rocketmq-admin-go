@@ -447,7 +447,7 @@ func (c *client) invokeBrokerDecoded(ctx context.Context, brokerAddr string, cod
 }
 
 func (c *client) invokeAddress(ctx context.Context, addr string, code int, ext map[string]any, body []byte) (map[string]any, error) {
-	resp, err := invokeSyncWithRetry(ctx, addr, c.useTLS, c.timeout, commandWithBody(code, ext, body), c.tlsConfig, c.retry, c.backoff)
+	resp, err := invokeSyncWithRetry(ctx, addr, c.useTLS, c.timeout, commandWithBody(code, ext, body), c.tlsConfig, c.retry, c.backoff, c.creds)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func (c *client) invokeAddress(ctx context.Context, addr string, code int, ext m
 }
 
 func (c *client) invokeAddressWithHeader(ctx context.Context, addr string, code int, ext map[string]any, body []byte) (map[string]any, error) {
-	resp, err := invokeSyncWithRetry(ctx, addr, c.useTLS, c.timeout, commandWithBody(code, ext, body), c.tlsConfig, c.retry, c.backoff)
+	resp, err := invokeSyncWithRetry(ctx, addr, c.useTLS, c.timeout, commandWithBody(code, ext, body), c.tlsConfig, c.retry, c.backoff, c.creds)
 	if err != nil {
 		return nil, err
 	}
@@ -476,7 +476,7 @@ func (c *client) invokeAddressWithHeader(ctx context.Context, addr string, code 
 }
 
 func (c *client) invokeAddressWithPropertiesBody(ctx context.Context, addr string, code int, ext map[string]any, body []byte) (map[string]any, error) {
-	resp, err := invokeSyncWithRetry(ctx, addr, c.useTLS, c.timeout, commandWithBody(code, ext, body), c.tlsConfig, c.retry, c.backoff)
+	resp, err := invokeSyncWithRetry(ctx, addr, c.useTLS, c.timeout, commandWithBody(code, ext, body), c.tlsConfig, c.retry, c.backoff, c.creds)
 	if err != nil {
 		return nil, err
 	}

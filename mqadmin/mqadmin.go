@@ -103,6 +103,10 @@ type Admin interface {
 	DeleteAcl(ctx context.Context, brokerAddr, subject, resource, policyType string) error
 	GetAcl(ctx context.Context, brokerAddr, subject string) (*AclInfo, error)
 	ListAcl(ctx context.Context, brokerAddr, subjectFilter, resourceFilter string) ([]AclInfo, error)
+	GetBrokerClusterAclInfo(ctx context.Context, brokerAddr string) (*AclInfoV1, error)
+	UpdateAclConfig(ctx context.Context, cfg AclConfigV1) error
+	DeleteAclConfig(ctx context.Context, accessKey string) error
+	UpdateGlobalWhiteAddrsConfig(ctx context.Context, addrs []string) error
 	CopyUsers(ctx context.Context, sourceBroker, targetBroker, username string) error
 	CopyAcls(ctx context.Context, sourceBroker, targetBroker, subject string) error
 	GetBrokerLiteInfo(ctx context.Context, brokerAddr string) (map[string]any, error)
@@ -125,6 +129,7 @@ type client struct {
 	retry      int
 	backoff    time.Duration
 	tlsConfig  *tls.Config
+	creds      Credentials
 	nsCursor   uint32
 	addrMap    map[string]string
 }
@@ -150,6 +155,7 @@ func New(opts Options) (Admin, error) {
 		retry:      opts.Retry,
 		backoff:    time.Duration(retryBackoffMs) * time.Millisecond,
 		tlsConfig:  tlsConfig,
+		creds:      opts.Credentials,
 		addrMap:    copyAddrMap(opts.BrokerAddrMap),
 	}, nil
 }
@@ -159,7 +165,7 @@ func (c *client) Close() error {
 }
 
 func (c *client) invokeBroker(ctx context.Context, brokerAddr string, cmd *remotingCommand) (*remotingCommand, error) {
-	return invokeSyncWithRetry(ctx, c.rewriteBrokerAddr(brokerAddr), c.useTLS, c.timeout, cmd, c.tlsConfig, c.retry, c.backoff)
+	return invokeSyncWithRetry(ctx, c.rewriteBrokerAddr(brokerAddr), c.useTLS, c.timeout, cmd, c.tlsConfig, c.retry, c.backoff, c.creds)
 }
 
 func (c *client) invokeNameServer(ctx context.Context, cmd *remotingCommand) (*remotingCommand, error) {
@@ -170,7 +176,7 @@ func (c *client) invokeNameServer(ctx context.Context, cmd *remotingCommand) (*r
 	var lastErr error
 	for i := 0; i < len(c.nameServer); i++ {
 		idx := (start + i) % len(c.nameServer)
-		resp, err := invokeSyncWithRetry(ctx, c.nameServer[idx], c.useTLS, c.timeout, cmd, c.tlsConfig, c.retry, c.backoff)
+		resp, err := invokeSyncWithRetry(ctx, c.nameServer[idx], c.useTLS, c.timeout, cmd, c.tlsConfig, c.retry, c.backoff, c.creds)
 		if err == nil {
 			return resp, nil
 		}
@@ -198,4 +204,54 @@ func copyAddrMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+type Resolver interface {
+	Resolve() []string
+}
+
+type passthroughResolver struct {
+	addrs []string
+}
+
+func NewPassthroughResolver(addrs []string) Resolver {
+	return &passthroughResolver{addrs: append([]string(nil), addrs...)}
+}
+
+func (r *passthroughResolver) Resolve() []string {
+	return append([]string(nil), r.addrs...)
+}
+
+type AdminOption func(*Options)
+
+func WithResolver(resolver Resolver) AdminOption {
+	return func(opts *Options) {
+		if resolver == nil {
+			return
+		}
+		opts.NameServer = resolver.Resolve()
+	}
+}
+
+func WithCredentials(creds Credentials) AdminOption {
+	return func(opts *Options) {
+		opts.Credentials = creds
+	}
+}
+
+func WithNameServer(addrs []string) AdminOption {
+	return func(opts *Options) {
+		opts.NameServer = append([]string(nil), addrs...)
+	}
+}
+
+func NewAdmin(adminOpts ...AdminOption) (Admin, error) {
+	opts := Options{}
+	for _, apply := range adminOpts {
+		if apply == nil {
+			continue
+		}
+		apply(&opts)
+	}
+	return New(opts)
 }

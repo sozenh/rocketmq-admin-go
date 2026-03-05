@@ -62,7 +62,7 @@ func TestInvokeSyncWithRetryStopsOnRemotingError(t *testing.T) {
 	})
 	defer stop()
 
-	_, err := invokeSyncWithRetry(context.Background(), addr, false, 2*time.Second, newCommand(requestCodeGetAllTopicListFromNameSrv, nil), nil, 3, 1*time.Millisecond)
+	_, err := invokeSyncWithRetry(context.Background(), addr, false, 2*time.Second, newCommand(requestCodeGetAllTopicListFromNameSrv, nil), nil, 3, 1*time.Millisecond, Credentials{})
 	if err == nil {
 		t.Fatal("expected remoting error, got nil")
 	}
@@ -80,7 +80,7 @@ func TestInvokeSyncWithRetryRetriesOnIOError(t *testing.T) {
 	})
 	defer stop()
 
-	resp, err := invokeSyncWithRetry(context.Background(), addr, false, 2*time.Second, newCommand(requestCodeGetAllTopicListFromNameSrv, nil), nil, 2, 1*time.Millisecond)
+	resp, err := invokeSyncWithRetry(context.Background(), addr, false, 2*time.Second, newCommand(requestCodeGetAllTopicListFromNameSrv, nil), nil, 2, 1*time.Millisecond, Credentials{})
 	if err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}

@@ -81,7 +81,7 @@ func (c *client) WipeWritePerm(ctx context.Context, brokerName string, namesrvs 
 		targets = c.nameServer
 	}
 	for _, ns := range targets {
-		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeWipeWritePermOfBroker, toMapString(map[string]any{"brokerName": brokerName})), c.tlsConfig, c.retry, c.backoff); err != nil {
+		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeWipeWritePermOfBroker, toMapString(map[string]any{"brokerName": brokerName})), c.tlsConfig, c.retry, c.backoff, c.creds); err != nil {
 			return err
 		}
 	}
@@ -97,7 +97,7 @@ func (c *client) AddWritePerm(ctx context.Context, brokerName string, namesrvs [
 		targets = c.nameServer
 	}
 	for _, ns := range targets {
-		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeAddWritePermOfBroker, toMapString(map[string]any{"brokerName": brokerName})), c.tlsConfig, c.retry, c.backoff); err != nil {
+		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeAddWritePermOfBroker, toMapString(map[string]any{"brokerName": brokerName})), c.tlsConfig, c.retry, c.backoff, c.creds); err != nil {
 			return err
 		}
 	}
@@ -111,7 +111,7 @@ func (c *client) GetNamesrvConfig(ctx context.Context, namesrvs []string) (map[s
 	}
 	out := map[string]map[string]string{}
 	for _, ns := range targets {
-		resp, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeGetNamesrvConfig, nil), c.tlsConfig, c.retry, c.backoff)
+		resp, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, newCommand(requestCodeGetNamesrvConfig, nil), c.tlsConfig, c.retry, c.backoff, c.creds)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +128,7 @@ func (c *client) UpdateNamesrvConfig(ctx context.Context, namesrvs []string, pro
 	for _, ns := range targets {
 		cmd := newCommand(requestCodeUpdateNamesrvConfig, nil)
 		cmd.Body = propertiesToBytes(properties)
-		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, cmd, c.tlsConfig, c.retry, c.backoff); err != nil {
+		if _, err := invokeSyncWithRetry(ctx, ns, c.useTLS, c.timeout, cmd, c.tlsConfig, c.retry, c.backoff, c.creds); err != nil {
 			return err
 		}
 	}

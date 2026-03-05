@@ -3,11 +3,15 @@ package mqadmin
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"sort"
@@ -51,6 +55,10 @@ const (
 	requestCodeDeleteExpiredCommitLog                      = 329
 	requestCodeGetAllProducerInfo                          = 328
 	requestCodeQueryConsumeQueue                           = 321
+	requestCodeUpdateAndCreateAclConfig                    = 50
+	requestCodeDeleteAclConfig                             = 51
+	requestCodeUpdateGlobalWhiteAddrsConfig                = 53
+	requestCodeGetBrokerClusterAclConfig                   = 54
 	requestCodeCheckRocksdbCQWriteProgress                 = 354
 	requestCodeExportRocksDBConfigToJSON                   = 355
 	requestCodeUpdateNamesrvConfig                         = 318
@@ -101,6 +109,12 @@ const (
 	defaultPerm                                     int    = 6
 	defaultTopicFilterType                          string = "SINGLE_TAG"
 	defaultTopicSysFlag                             int    = 0
+)
+
+const (
+	extFieldSignature     = "Signature"
+	extFieldAccessKey     = "AccessKey"
+	extFieldSecurityToken = "SecurityToken"
 )
 
 var opaqueCounter int32
@@ -206,7 +220,8 @@ func dial(ctx context.Context, addr string, useTLS bool, timeout time.Duration, 
 	return dialer.DialContext(ctx, "tcp", addr)
 }
 
-func invokeSync(ctx context.Context, addr string, useTLS bool, timeout time.Duration, req *remotingCommand, tlsConfig *tls.Config) (*remotingCommand, error) {
+func invokeSync(ctx context.Context, addr string, useTLS bool, timeout time.Duration, req *remotingCommand, tlsConfig *tls.Config, creds Credentials) (*remotingCommand, error) {
+	applySignature(req, creds)
 	conn, err := dial(ctx, addr, useTLS, timeout, tlsConfig)
 	if err != nil {
 		return nil, err
@@ -248,14 +263,14 @@ func invokeSync(ctx context.Context, addr string, useTLS bool, timeout time.Dura
 	return resp, nil
 }
 
-func invokeSyncWithRetry(ctx context.Context, addr string, useTLS bool, timeout time.Duration, req *remotingCommand, tlsConfig *tls.Config, retry int, backoff time.Duration) (*remotingCommand, error) {
+func invokeSyncWithRetry(ctx context.Context, addr string, useTLS bool, timeout time.Duration, req *remotingCommand, tlsConfig *tls.Config, retry int, backoff time.Duration, creds Credentials) (*remotingCommand, error) {
 	var lastErr error
 	attempts := retry + 1
 	if attempts < 1 {
 		attempts = 1
 	}
 	for i := 0; i < attempts; i++ {
-		resp, err := invokeSync(ctx, addr, useTLS, timeout, req, tlsConfig)
+		resp, err := invokeSync(ctx, addr, useTLS, timeout, req, tlsConfig, creds)
 		if err == nil {
 			return resp, nil
 		}
@@ -273,6 +288,50 @@ func invokeSyncWithRetry(ctx context.Context, addr string, useTLS bool, timeout 
 		}
 	}
 	return nil, lastErr
+}
+
+func applySignature(cmd *remotingCommand, creds Credentials) {
+	if !creds.Enabled() {
+		return
+	}
+	if cmd.ExtFields == nil {
+		cmd.ExtFields = map[string]string{}
+	}
+	delete(cmd.ExtFields, extFieldSignature)
+	delete(cmd.ExtFields, extFieldAccessKey)
+	delete(cmd.ExtFields, extFieldSecurityToken)
+
+	vals := map[string]string{extFieldAccessKey: creds.AccessKey}
+	order := make([]string, 0, len(cmd.ExtFields)+2)
+	order = append(order, extFieldAccessKey)
+	if creds.SecurityToken != "" {
+		vals[extFieldSecurityToken] = creds.SecurityToken
+		order = append(order, extFieldSecurityToken)
+	}
+	for k, v := range cmd.ExtFields {
+		vals[k] = v
+		order = append(order, k)
+	}
+	sort.Strings(order)
+
+	content := strings.Builder{}
+	for _, k := range order {
+		content.WriteString(vals[k])
+	}
+	raw := append([]byte(content.String()), cmd.Body...)
+	cmd.ExtFields[extFieldSignature] = calculateSignature(raw, []byte(creds.SecretKey))
+	cmd.ExtFields[extFieldAccessKey] = creds.AccessKey
+	if creds.SecurityToken != "" {
+		cmd.ExtFields[extFieldSecurityToken] = creds.SecurityToken
+	}
+}
+
+func calculateSignature(data, sk []byte) string {
+	mac := hmac.New(func() hash.Hash {
+		return sha1.New()
+	}, sk)
+	_, _ = mac.Write(data)
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func toMapString(values map[string]any) map[string]string {
