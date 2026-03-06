@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sozenh/rocketmq-admin-go/mqadmin"
+	. "github.com/sozenh/rocketmq-admin-go/mqadmin"
 )
 
 type authIntegrationEnv struct {
@@ -74,7 +75,7 @@ func buildACL(subject, resource string) mqadmin.AclInfo {
 func TestIntegrationAuthCreateUser(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_create_user")
-	user := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}
+	user := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}
 	t.Cleanup(func() {
 		_ = env.cli.DeleteUser(env.ctx, username, mqadmin.WithBroker(env.broker...))
 	})
@@ -97,8 +98,8 @@ func TestIntegrationAuthCreateUser(t *testing.T) {
 func TestIntegrationAuthUpdateUser(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_update_user")
-	baseUser := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}
-	updatedUser := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd2", UserType: "NORMAL"}
+	baseUser := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}
+	updatedUser := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd2", UserType: UserTypeNormal}
 	t.Cleanup(func() {
 		_ = env.cli.DeleteUser(env.ctx, username, mqadmin.WithBroker(env.broker...))
 	})
@@ -126,7 +127,7 @@ func TestIntegrationAuthUpdateUser(t *testing.T) {
 func TestIntegrationAuthDeleteUser(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_delete_user")
-	user := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}
+	user := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}
 	if err := env.cli.CreateUser(env.ctx, user, mqadmin.WithBroker(env.broker...)); err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestIntegrationAuthDeleteUser(t *testing.T) {
 func TestIntegrationAuthGetUser(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_get_user")
-	userInfo := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}
+	userInfo := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}
 	err := env.cli.CreateUser(env.ctx, userInfo, mqadmin.WithBroker(env.broker...))
 	if err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
@@ -187,7 +188,7 @@ func TestIntegrationAuthGetUser(t *testing.T) {
 func TestIntegrationAuthListUser(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_list_user")
-	userInfo := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}
+	userInfo := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}
 	err := env.cli.CreateUser(env.ctx, userInfo, mqadmin.WithBroker(env.broker...))
 	if err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
@@ -247,7 +248,7 @@ func TestIntegrationAuthListUser(t *testing.T) {
 func TestIntegrationAuthCreateAcl(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_create_acl_user")
-	err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}, mqadmin.WithBroker(env.broker...))
+	err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}, mqadmin.WithBroker(env.broker...))
 	if err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
@@ -279,7 +280,7 @@ func TestIntegrationAuthCreateAcl(t *testing.T) {
 func TestIntegrationAuthUpdateAcl(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_update_acl_user")
-	userInfo := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}
+	userInfo := mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}
 	err := env.cli.CreateUser(env.ctx, userInfo, mqadmin.WithBroker(env.broker...))
 	if err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
@@ -317,7 +318,7 @@ func TestIntegrationAuthUpdateAcl(t *testing.T) {
 func TestIntegrationAuthDeleteAcl(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_delete_acl_user")
-	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}, mqadmin.WithBroker(env.broker...)); err != nil {
+	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}, mqadmin.WithBroker(env.broker...)); err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
 	subject := "User:" + username
@@ -349,7 +350,7 @@ func TestIntegrationAuthGetAcl(t *testing.T) {
 	username := uniqueAuthName("mqadmin_it_get_acl_user")
 	subject := "User:" + username
 	resource := "Topic:" + uniqueAuthName("mqadmin_it_get_acl_topic")
-	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}, mqadmin.WithBroker(env.broker...)); err != nil {
+	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}, mqadmin.WithBroker(env.broker...)); err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
 	if err := env.cli.CreateAcl(env.ctx, buildACL(subject, resource), mqadmin.WithBroker(env.broker...)); err != nil {
@@ -386,7 +387,7 @@ func TestIntegrationAuthListAcl(t *testing.T) {
 	username := uniqueAuthName("mqadmin_it_list_acl_user")
 	subject := "User:" + username
 	resource := "Topic:" + uniqueAuthName("mqadmin_it_list_acl_topic")
-	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: "NORMAL"}, mqadmin.WithBroker(env.broker...)); err != nil {
+	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}, mqadmin.WithBroker(env.broker...)); err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
 	if err := env.cli.CreateAcl(env.ctx, buildACL(subject, resource), mqadmin.WithBroker(env.broker...)); err != nil {

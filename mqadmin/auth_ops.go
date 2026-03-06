@@ -7,11 +7,18 @@ import (
 	"fmt"
 )
 
+type UserType string
+
+const (
+	UserTypeSuper  UserType = "Super"
+	UserTypeNormal UserType = "Normal"
+)
+
 type UserInfo struct {
-	Username   string `json:"username"`
-	Password   string `json:"password,omitempty"`
-	UserType   string `json:"userType,omitempty"`
-	UserStatus string `json:"userStatus,omitempty"`
+	Username   string   `json:"username"`
+	Password   string   `json:"password,omitempty"`
+	UserType   UserType `json:"userType,omitempty"`
+	UserStatus string   `json:"userStatus,omitempty"`
 }
 
 type AclInfo struct {

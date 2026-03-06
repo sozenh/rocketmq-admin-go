@@ -126,7 +126,7 @@ func TestIntegrationAuthProbe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	probeUser := UserInfo{Username: "mqadmin_go_probe", Password: "P@ssw0rd", UserType: "NORMAL"}
+	probeUser := UserInfo{Username: "mqadmin_go_probe", Password: "P@ssw0rd", UserType: UserTypeNormal}
 	err = cli.CreateUser(ctx, probeUser, WithBroker(broker0))
 	if err != nil {
 		t.Logf("auth create user probe failed (likely ACL/Auth config required): %v", err)
