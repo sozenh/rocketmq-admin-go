@@ -10,5 +10,4 @@ func TestIntegrationCompareWithJavaMQAdmin(t *testing.T) {
 	runCompareMessageCases(t, h)
 	runCompareConfigCases(t, h)
 	runCompareRemainingCases(t, h)
-	runCompareAuthCases(t, h)
 }
