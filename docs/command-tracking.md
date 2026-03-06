@@ -15,6 +15,35 @@
 
 状态说明：`已实现` 表示已在 `mqadmin-go/mqadmin/Admin` 暴露对应能力；`未实现` 表示尚未落地。
 
+### Cluster（2）
+
+| 命令类 | 状态 |
+|---|---|
+| ClusterListSubCommand | 已实现 |
+| CLusterSendMsgRTCommand | 已实现 |
+
+### Auth - ACL（6）
+
+| 命令类 | 状态 |
+|---|---|
+| CreateAclSubCommand | 已实现 |
+| UpdateAclSubCommand | 已实现 |
+| DeleteAclSubCommand | 已实现 |
+| GetAclSubCommand | 已实现 |
+| ListAclSubCommand | 已实现 |
+| CopyAclsSubCommand | 已实现 |
+
+### Auth - User（6）
+
+| 命令类 | 状态 |
+|---|---|
+| CreateUserSubCommand | 已实现 |
+| UpdateUserSubCommand | 已实现 |
+| DeleteUserSubCommand | 已实现 |
+| GetUserSubCommand | 已实现 |
+| ListUserSubCommand | 已实现 |
+| CopyUsersSubCommand | 已实现 |
+
 ### Topic（12）
 
 | 命令类 | 状态 |
@@ -101,13 +130,6 @@
 | ConsumerConnectionSubCommand | 已实现 |
 | ProducerSubCommand | 已实现 |
 
-### Cluster（2）
-
-| 命令类 | 状态 |
-|---|---|
-| ClusterListSubCommand | 已实现 |
-| CLusterSendMsgRTCommand | 已实现 |
-
 ### NameServer / KV（6）
 
 | 命令类 | 状态 |
@@ -146,28 +168,6 @@
 | UpdateControllerConfigSubCommand | 已实现 |
 | ReElectMasterSubCommand | 已实现 |
 | CleanControllerBrokerMetaSubCommand | 已实现 |
-
-### Auth - User（6）
-
-| 命令类 | 状态 |
-|---|---|
-| CreateUserSubCommand | 已实现 |
-| UpdateUserSubCommand | 已实现 |
-| DeleteUserSubCommand | 已实现 |
-| GetUserSubCommand | 已实现 |
-| ListUserSubCommand | 已实现 |
-| CopyUsersSubCommand | 已实现 |
-
-### Auth - ACL（6）
-
-| 命令类 | 状态 |
-|---|---|
-| CreateAclSubCommand | 已实现 |
-| UpdateAclSubCommand | 已实现 |
-| DeleteAclSubCommand | 已实现 |
-| GetAclSubCommand | 已实现 |
-| ListAclSubCommand | 已实现 |
-| CopyAclsSubCommand | 已实现 |
 
 ### Lite Topic（6）
 

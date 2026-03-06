@@ -152,15 +152,9 @@ func (c *client) ConsumerProgress(ctx context.Context, group, topic string) (map
 		if err != nil {
 			return nil, err
 		}
-		if table, ok := clusterInfo["brokerAddrTable"].(map[string]any); ok {
-			for _, v := range table {
-				if m, ok := v.(map[string]any); ok {
-					if addrs, ok := m["brokerAddrs"].(map[string]any); ok {
-						if a, ok := addrs["0"].(string); ok {
-							brokers = append(brokers, a)
-						}
-					}
-				}
+		for _, broker := range clusterInfo.BrokerAddrTable {
+			if addr := broker.BrokerAddrs["0"]; addr != "" {
+				brokers = append(brokers, addr)
 			}
 		}
 	}
@@ -212,6 +206,28 @@ func (c *client) ConsumerStatus(ctx context.Context, topic, group, clientAddr st
 	return out, nil
 }
 
+func (c *client) StatsAll(ctx context.Context, topic string) (*StatsAllResult, error) {
+	topics := []string{}
+	if topic != "" {
+		topics = append(topics, topic)
+	} else {
+		list, err := c.TopicList(ctx)
+		if err != nil {
+			return nil, err
+		}
+		topics = append(topics, list.TopicList...)
+	}
+	out := make(map[string]map[string]TopicStatsTable)
+	for _, t := range topics {
+		status, err := c.TopicStatus(ctx, t)
+		if err != nil {
+			continue
+		}
+		out[t] = status
+	}
+	return &StatsAllResult{TopicCount: len(topics), Topics: out}, nil
+}
+
 func (c *client) GetConsumerConfig(ctx context.Context, group string) (map[string]any, error) {
 	if group == "" {
 		return nil, errEmptyGroup
@@ -221,27 +237,17 @@ func (c *client) GetConsumerConfig(ctx context.Context, group string) (map[strin
 		return nil, err
 	}
 	result := map[string]any{}
-	if table, ok := clusterInfo["brokerAddrTable"].(map[string]any); ok {
-		for brokerName, v := range table {
-			m, ok := v.(map[string]any)
-			if !ok {
-				continue
-			}
-			addrs, ok := m["brokerAddrs"].(map[string]any)
-			if !ok {
-				continue
-			}
-			addr, _ := addrs["0"].(string)
-			if addr == "" {
-				continue
-			}
-			wrapper, err := c.GetAllSubscriptionGroup(ctx, c.rewriteBrokerAddr(addr))
-			if err != nil {
-				continue
-			}
-			if cfg, ok := wrapper.SubscriptionGroupTable[group]; ok {
-				result[brokerName] = cfg
-			}
+	for brokerName, broker := range clusterInfo.BrokerAddrTable {
+		addr := broker.BrokerAddrs["0"]
+		if addr == "" {
+			continue
+		}
+		wrapper, err := c.GetAllSubscriptionGroup(ctx, c.rewriteBrokerAddr(addr))
+		if err != nil {
+			continue
+		}
+		if cfg, ok := wrapper.SubscriptionGroupTable[group]; ok {
+			result[brokerName] = cfg
 		}
 	}
 	return result, nil
@@ -249,91 +255,6 @@ func (c *client) GetConsumerConfig(ctx context.Context, group string) (map[strin
 
 func (c *client) StartMonitoring(ctx context.Context, group, topic string) (map[string]any, error) {
 	return c.ConsumerProgress(ctx, group, topic)
-}
-
-func (c *client) ClusterList(ctx context.Context) (map[string]any, error) {
-	resp, err := c.invokeNameServer(ctx, newCommand(requestCodeGetBrokerClusterInfo, nil))
-	if err != nil {
-		return nil, err
-	}
-	out := decodeResetOffsetBody(resp.Body)
-	return out, nil
-}
-
-func (c *client) ClusterSendMsgRT(ctx context.Context, clusterName string) (map[string]any, error) {
-	info, err := c.ClusterList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"cluster": clusterName,
-		"note":    "clusterSendMsgRT in mqadmin-go currently provides broker runtime snapshot, not active message benchmark",
-		"data":    info,
-	}, nil
-}
-
-func (c *client) CopyUsers(ctx context.Context, sourceBroker, targetBroker, username string) error {
-	if sourceBroker == "" || targetBroker == "" {
-		return errEmptyBrokerAddr
-	}
-	if username != "" {
-		u, err := c.GetUser(ctx, sourceBroker, username)
-		if err != nil {
-			return err
-		}
-		if _, err := c.GetUser(ctx, targetBroker, username); err != nil {
-			return c.CreateUser(ctx, targetBroker, *u)
-		}
-		return c.UpdateUser(ctx, targetBroker, *u)
-	}
-	users, err := c.ListUser(ctx, sourceBroker, "")
-	if err != nil {
-		return err
-	}
-	for _, u := range users {
-		if _, err := c.GetUser(ctx, targetBroker, u.Username); err != nil {
-			if err := c.CreateUser(ctx, targetBroker, u); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := c.UpdateUser(ctx, targetBroker, u); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *client) CopyAcls(ctx context.Context, sourceBroker, targetBroker, subject string) error {
-	if sourceBroker == "" || targetBroker == "" {
-		return errEmptyBrokerAddr
-	}
-	if subject != "" {
-		a, err := c.GetAcl(ctx, sourceBroker, subject)
-		if err != nil {
-			return err
-		}
-		if _, err := c.GetAcl(ctx, targetBroker, subject); err != nil {
-			return c.CreateAcl(ctx, targetBroker, *a)
-		}
-		return c.UpdateAcl(ctx, targetBroker, *a)
-	}
-	acls, err := c.ListAcl(ctx, sourceBroker, "", "")
-	if err != nil {
-		return err
-	}
-	for _, a := range acls {
-		if _, err := c.GetAcl(ctx, targetBroker, a.Subject); err != nil {
-			if err := c.CreateAcl(ctx, targetBroker, a); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := c.UpdateAcl(ctx, targetBroker, a); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (c *client) GetBrokerLiteInfo(ctx context.Context, brokerAddr string) (map[string]any, error) {
@@ -383,26 +304,4 @@ func (c *client) GetLiteGroupInfo(ctx context.Context, req LiteTopicRequest) (ma
 func (c *client) TriggerLiteDispatch(ctx context.Context, req LiteTopicRequest) error {
 	_, err := c.invokeBroker(ctx, req.BrokerAddr, newCommand(requestCodeTriggerLiteDispatch, toMapString(map[string]any{"group": req.Group, "clientId": req.ClientID})))
 	return err
-}
-
-func (c *client) StatsAll(ctx context.Context, topic string) (map[string]any, error) {
-	topics := []string{}
-	if topic != "" {
-		topics = append(topics, topic)
-	} else {
-		list, err := c.TopicList(ctx)
-		if err != nil {
-			return nil, err
-		}
-		topics = append(topics, list.TopicList...)
-	}
-	out := map[string]any{}
-	for _, t := range topics {
-		status, err := c.TopicStatus(ctx, t)
-		if err != nil {
-			continue
-		}
-		out[t] = status
-	}
-	return map[string]any{"topicCount": len(topics), "topics": out}, nil
 }

@@ -1,135 +1,323 @@
-//go:build integration
-
 package mqadmin
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
-func runCompareAuthCases(t *testing.T, h *compareHarness) {
-	t.Helper()
-
-	h.assertCrossMutate(t, "createUser",
-		func() error {
-			return h.cli.CreateUser(h.ctx, h.goBroker0, UserInfo{Username: h.user1, Password: "P@ssw0rd", UserType: "NORMAL"})
-		},
-		func() (string, error) {
-			return h.runJava("getUser", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-u", h.user1)
-		},
-		func() (string, error) {
-			return h.runJava("createUser", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-u", h.user2, "-p", "P@ssw0rd", "-t", "NORMAL")
-		},
-		func() error {
-			_, err := h.cli.GetUser(h.ctx, h.goBroker0, h.user2)
-			return err
-		},
-	)
-
-	h.assertBoth(t, "updateUser", func() error {
-		return h.cli.UpdateUser(h.ctx, h.goBroker0, UserInfo{Username: h.user1, Password: "P@ssw0rd2"})
-	}, func() (string, error) {
-		return h.runJava("updateUser", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-u", h.user1, "-p", "P@ssw0rd2")
-	})
-
-	if _, err := h.cli.GetUser(h.ctx, h.goBroker0, h.user1); err != nil {
-		t.Fatalf("go getUser failed: %v", err)
+func TestCreateUserRollbackOnBrokerFailure(t *testing.T) {
+	var createCalls int32
+	var rollbackDeletes int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthCreateUser:
+			if atomic.AddInt32(&createCalls, 1) == 2 {
+				return &remotingCommand{Code: 17, Remark: "create failed", Opaque: req.Opaque}
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		case requestCodeAuthDeleteUser:
+			atomic.AddInt32(&rollbackDeletes, 1)
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
 	}
-	if out, err := h.runJava("getUser", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-u", h.user1); err != nil {
-		t.Fatalf("java getUser failed: %v, out=%s", err, out)
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
+
+	c := &client{timeout: 2 * time.Second}
+	err := c.CreateUser(context.Background(), UserInfo{Username: "rollback-user", Password: "p"}, WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected create user error")
 	}
-
-	if _, err := h.cli.ListUser(h.ctx, h.goBroker0, "u_"); err != nil {
-		t.Fatalf("go listUser failed: %v", err)
+	if !strings.Contains(err.Error(), `create user "rollback-user" on broker `) {
+		t.Fatalf("expected broker failure context, got: %v", err)
 	}
-	if out, err := h.runJava("listUser", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-f", "u_"); err != nil {
-		t.Fatalf("java listUser failed: %v, out=%s", err, out)
+	if !strings.Contains(err.Error(), "rolled back 1 broker(s)") {
+		t.Fatalf("expected rollback details, got: %v", err)
 	}
-
-	h.assertCrossMutate(t, "createAcl",
-		func() error {
-			return h.cli.CreateAcl(h.ctx, h.goBroker0, AclInfo{Subject: h.subject1, Policies: []PolicyInfo{{Entries: []PolicyEntryInfo{{Resource: "Topic:" + h.topicA, Actions: []string{"PUB", "SUB"}, SourceIps: []string{"127.0.0.1"}, Decision: "ALLOW"}}}}})
-		},
-		func() (string, error) {
-			return h.runJava("getAcl", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-s", h.subject1)
-		},
-		func() (string, error) {
-			return h.runJava("createAcl", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-s", h.subject2, "-r", "Topic:"+h.topicA, "-a", "PUB,SUB", "-i", "127.0.0.1", "-d", "ALLOW")
-		},
-		func() error {
-			_, err := h.cli.GetAcl(h.ctx, h.goBroker0, h.subject2)
-			return err
-		},
-	)
-
-	h.assertBoth(t, "updateAcl", func() error {
-		return h.cli.UpdateAcl(h.ctx, h.goBroker0, AclInfo{Subject: h.subject1, Policies: []PolicyInfo{{Entries: []PolicyEntryInfo{{Resource: "Topic:" + h.topicA, Actions: []string{"SUB"}, SourceIps: []string{"127.0.0.1"}, Decision: "ALLOW"}}}}})
-	}, func() (string, error) {
-		return h.runJava("updateAcl", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-s", h.subject1, "-r", "Topic:"+h.topicA, "-a", "SUB", "-i", "127.0.0.1", "-d", "ALLOW")
-	})
-
-	if _, err := h.cli.GetAcl(h.ctx, h.goBroker0, h.subject1); err != nil {
-		t.Fatalf("go getAcl failed: %v", err)
+	if atomic.LoadInt32(&createCalls) != 2 {
+		t.Fatalf("expected exactly 2 create attempts, got %d", atomic.LoadInt32(&createCalls))
 	}
-	if out, err := h.runJava("getAcl", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-s", h.subject1); err != nil {
-		t.Fatalf("java getAcl failed: %v, out=%s", err, out)
+	if atomic.LoadInt32(&rollbackDeletes) != 1 {
+		t.Fatalf("expected exactly 1 rollback delete, got %d", atomic.LoadInt32(&rollbackDeletes))
 	}
+}
 
-	if _, err := h.cli.ListAcl(h.ctx, h.goBroker0, "User:", ""); err != nil {
-		t.Fatalf("go listAcl failed: %v", err)
+func TestCreateUserRollbackFailureIsReported(t *testing.T) {
+	var createCalls int32
+	var rollbackDeletes int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthCreateUser:
+			if atomic.AddInt32(&createCalls, 1) == 2 {
+				return &remotingCommand{Code: 17, Remark: "create failed", Opaque: req.Opaque}
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		case requestCodeAuthDeleteUser:
+			atomic.AddInt32(&rollbackDeletes, 1)
+			return &remotingCommand{Code: 18, Remark: "delete failed", Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
 	}
-	if out, err := h.runJava("listAcl", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-s", "User:"); err != nil {
-		t.Fatalf("java listAcl failed: %v, out=%s", err, out)
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
+
+	c := &client{timeout: 2 * time.Second}
+	err := c.CreateUser(context.Background(), UserInfo{Username: "rollback-fail-user", Password: "p"}, WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected create user error")
 	}
+	if !strings.Contains(err.Error(), "rollback failed") {
+		t.Fatalf("expected rollback failure details, got: %v", err)
+	}
+	if atomic.LoadInt32(&rollbackDeletes) != 1 {
+		t.Fatalf("expected exactly 1 rollback delete attempt, got %d", atomic.LoadInt32(&rollbackDeletes))
+	}
+}
 
-	h.assertCrossMutate(t, "copyUser",
-		func() error {
-			return h.cli.CopyUsers(h.ctx, h.goBroker0, h.goBroker1, h.user1)
-		},
-		func() (string, error) {
-			return h.runJava("getUser", "-n", h.javaNamesrv, "-b", h.broker1Svc, "-u", h.user1)
-		},
-		func() (string, error) {
-			return h.runJava("copyUser", "-n", h.javaNamesrv, "-f", h.broker0Svc, "-t", h.broker1Svc, "-u", h.user2)
-		},
-		func() error {
-			_, err := h.cli.GetUser(h.ctx, h.goBroker1, h.user2)
-			return err
-		},
-	)
+func TestCreateAclRollbackOnBrokerFailure(t *testing.T) {
+	var createCalls int32
+	var rollbackDeletes int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthCreateAcl:
+			if atomic.AddInt32(&createCalls, 1) == 2 {
+				return &remotingCommand{Code: 17, Remark: "create failed", Opaque: req.Opaque}
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		case requestCodeAuthDeleteAcl:
+			atomic.AddInt32(&rollbackDeletes, 1)
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
+	}
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
 
-	h.assertCrossMutate(t, "copyAcl",
-		func() error {
-			return h.cli.CopyAcls(h.ctx, h.goBroker0, h.goBroker1, h.subject1)
-		},
-		func() (string, error) {
-			return h.runJava("getAcl", "-n", h.javaNamesrv, "-b", h.broker1Svc, "-s", h.subject1)
-		},
-		func() (string, error) {
-			return h.runJava("copyAcl", "-n", h.javaNamesrv, "-f", h.broker0Svc, "-t", h.broker1Svc, "-s", h.subject2)
-		},
-		func() error {
-			_, err := h.cli.GetAcl(h.ctx, h.goBroker1, h.subject2)
-			return err
-		},
-	)
+	c := &client{timeout: 2 * time.Second}
+	err := c.CreateAcl(context.Background(), AclInfo{Subject: "User:rollback-acl"}, WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected create acl error")
+	}
+	if !strings.Contains(err.Error(), `create acl "User:rollback-acl" on broker `) {
+		t.Fatalf("expected broker failure context, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rolled back 1 broker(s)") {
+		t.Fatalf("expected rollback details, got: %v", err)
+	}
+	if atomic.LoadInt32(&createCalls) != 2 {
+		t.Fatalf("expected exactly 2 create attempts, got %d", atomic.LoadInt32(&createCalls))
+	}
+	if atomic.LoadInt32(&rollbackDeletes) != 1 {
+		t.Fatalf("expected exactly 1 rollback delete, got %d", atomic.LoadInt32(&rollbackDeletes))
+	}
+}
 
-	h.assertBoth(t, "deleteAcl", func() error {
-		return h.cli.DeleteAcl(h.ctx, h.goBroker0, h.subject1, "Topic:"+h.topicA, "")
-	}, func() (string, error) {
-		return h.runJava("deleteAcl", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-s", h.subject2, "-r", "Topic:"+h.topicA)
-	})
+func TestCreateAclRollbackFailureIsReported(t *testing.T) {
+	var createCalls int32
+	var rollbackDeletes int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthCreateAcl:
+			if atomic.AddInt32(&createCalls, 1) == 2 {
+				return &remotingCommand{Code: 17, Remark: "create failed", Opaque: req.Opaque}
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		case requestCodeAuthDeleteAcl:
+			atomic.AddInt32(&rollbackDeletes, 1)
+			return &remotingCommand{Code: 18, Remark: "delete failed", Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
+	}
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
 
-	h.assertBoth(t, "deleteUser", func() error {
-		return h.cli.DeleteUser(h.ctx, h.goBroker0, h.user1)
-	}, func() (string, error) {
-		return h.runJava("deleteUser", "-n", h.javaNamesrv, "-b", h.broker0Svc, "-u", h.user2)
-	})
-	_ = h.cli.DeleteAcl(h.ctx, h.goBroker1, h.subject1, "Topic:"+h.topicA, "")
-	_ = h.cli.DeleteAcl(h.ctx, h.goBroker1, h.subject2, "Topic:"+h.topicA, "")
-	_ = h.cli.DeleteUser(h.ctx, h.goBroker1, h.user1)
-	_ = h.cli.DeleteUser(h.ctx, h.goBroker1, h.user2)
+	c := &client{timeout: 2 * time.Second}
+	err := c.CreateAcl(context.Background(), AclInfo{Subject: "User:rollback-acl-fail"}, WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected create acl error")
+	}
+	if !strings.Contains(err.Error(), "rollback failed") {
+		t.Fatalf("expected rollback failure details, got: %v", err)
+	}
+	if atomic.LoadInt32(&rollbackDeletes) != 1 {
+		t.Fatalf("expected exactly 1 rollback delete attempt, got %d", atomic.LoadInt32(&rollbackDeletes))
+	}
+}
 
-	h.assertBoth(t, "deleteTopic", func() error {
-		return h.cli.DeleteTopic(h.ctx, DeleteTopicRequest{Topic: h.topicB, BrokerAddr: h.goBroker0, NameSrv: []string{h.goNS}})
-	}, func() (string, error) {
-		return h.runJava("deleteTopic", "-n", h.javaNamesrv, "-c", h.javaCluster, "-t", h.topicC)
-	})
+func TestUpdateUserRollbackOnBrokerFailure(t *testing.T) {
+	var updateCalls int32
+	var rollbackUpdates int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthGetUser:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque, Body: []byte(`{"username":"rollback-update-user","password":"old"}`)}
+		case requestCodeAuthUpdateUser:
+			n := atomic.AddInt32(&updateCalls, 1)
+			if n == 2 {
+				return &remotingCommand{Code: 17, Remark: "update failed", Opaque: req.Opaque}
+			}
+			if n == 3 {
+				atomic.AddInt32(&rollbackUpdates, 1)
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
+	}
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
+
+	c := &client{timeout: 2 * time.Second}
+	err := c.UpdateUser(context.Background(), UserInfo{Username: "rollback-update-user", Password: "new"}, WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected update user error")
+	}
+	if !strings.Contains(err.Error(), "rolled back 1 broker(s)") {
+		t.Fatalf("expected rollback details, got: %v", err)
+	}
+	if atomic.LoadInt32(&updateCalls) != 3 {
+		t.Fatalf("expected 3 update calls (2 forward + 1 rollback), got %d", atomic.LoadInt32(&updateCalls))
+	}
+	if atomic.LoadInt32(&rollbackUpdates) != 1 {
+		t.Fatalf("expected 1 rollback update, got %d", atomic.LoadInt32(&rollbackUpdates))
+	}
+}
+
+func TestDeleteUserRollbackOnBrokerFailure(t *testing.T) {
+	var deleteCalls int32
+	var rollbackCreates int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthGetUser:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque, Body: []byte(`{"username":"rollback-delete-user","password":"old"}`)}
+		case requestCodeAuthDeleteUser:
+			if atomic.AddInt32(&deleteCalls, 1) == 2 {
+				return &remotingCommand{Code: 17, Remark: "delete failed", Opaque: req.Opaque}
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		case requestCodeAuthCreateUser:
+			atomic.AddInt32(&rollbackCreates, 1)
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
+	}
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
+
+	c := &client{timeout: 2 * time.Second}
+	err := c.DeleteUser(context.Background(), "rollback-delete-user", WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected delete user error")
+	}
+	if !strings.Contains(err.Error(), "rolled back 1 broker(s)") {
+		t.Fatalf("expected rollback details, got: %v", err)
+	}
+	if atomic.LoadInt32(&deleteCalls) != 2 {
+		t.Fatalf("expected 2 delete calls, got %d", atomic.LoadInt32(&deleteCalls))
+	}
+	if atomic.LoadInt32(&rollbackCreates) != 1 {
+		t.Fatalf("expected 1 rollback create, got %d", atomic.LoadInt32(&rollbackCreates))
+	}
+}
+
+func TestUpdateAclRollbackOnBrokerFailure(t *testing.T) {
+	var updateCalls int32
+	var rollbackUpdates int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthGetAcl:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque, Body: []byte(`{"subject":"User:rollback-update-acl","policies":[]}`)}
+		case requestCodeAuthUpdateAcl:
+			n := atomic.AddInt32(&updateCalls, 1)
+			if n == 2 {
+				return &remotingCommand{Code: 17, Remark: "update failed", Opaque: req.Opaque}
+			}
+			if n == 3 {
+				atomic.AddInt32(&rollbackUpdates, 1)
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
+	}
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
+
+	c := &client{timeout: 2 * time.Second}
+	err := c.UpdateAcl(context.Background(), AclInfo{Subject: "User:rollback-update-acl", Policies: []PolicyInfo{}}, WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected update acl error")
+	}
+	if !strings.Contains(err.Error(), "rolled back 1 broker(s)") {
+		t.Fatalf("expected rollback details, got: %v", err)
+	}
+	if atomic.LoadInt32(&updateCalls) != 3 {
+		t.Fatalf("expected 3 update calls (2 forward + 1 rollback), got %d", atomic.LoadInt32(&updateCalls))
+	}
+	if atomic.LoadInt32(&rollbackUpdates) != 1 {
+		t.Fatalf("expected 1 rollback update, got %d", atomic.LoadInt32(&rollbackUpdates))
+	}
+}
+
+func TestDeleteAclRollbackOnBrokerFailure(t *testing.T) {
+	var deleteCalls int32
+	var rollbackCreates int32
+	handler := func(req *remotingCommand, _ int32) *remotingCommand {
+		switch req.Code {
+		case requestCodeAuthGetAcl:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque, Body: []byte(`{"subject":"User:rollback-delete-acl","policies":[]}`)}
+		case requestCodeAuthDeleteAcl:
+			if atomic.AddInt32(&deleteCalls, 1) == 2 {
+				return &remotingCommand{Code: 17, Remark: "delete failed", Opaque: req.Opaque}
+			}
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		case requestCodeAuthCreateAcl:
+			atomic.AddInt32(&rollbackCreates, 1)
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		default:
+			return &remotingCommand{Code: responseCodeSuccess, Opaque: req.Opaque}
+		}
+	}
+	b1, _, stop1 := startMockServer(t, handler)
+	defer stop1()
+	b2, _, stop2 := startMockServer(t, handler)
+	defer stop2()
+
+	c := &client{timeout: 2 * time.Second}
+	err := c.DeleteAcl(context.Background(), "User:rollback-delete-acl", "Topic:T", "", WithBroker(b1, b2))
+	if err == nil {
+		t.Fatal("expected delete acl error")
+	}
+	if !strings.Contains(err.Error(), "rolled back 1 broker(s)") {
+		t.Fatalf("expected rollback details, got: %v", err)
+	}
+	if atomic.LoadInt32(&deleteCalls) != 2 {
+		t.Fatalf("expected 2 delete calls, got %d", atomic.LoadInt32(&deleteCalls))
+	}
+	if atomic.LoadInt32(&rollbackCreates) != 1 {
+		t.Fatalf("expected 1 rollback create, got %d", atomic.LoadInt32(&rollbackCreates))
+	}
 }

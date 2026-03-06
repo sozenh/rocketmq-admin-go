@@ -299,15 +299,9 @@ func (c *client) ConsumerConnection(ctx context.Context, consumerGroup string) (
 	if err != nil {
 		return nil, err
 	}
-	if table, ok := cluster["brokerAddrTable"].(map[string]any); ok {
-		for _, v := range table {
-			if vm, ok := v.(map[string]any); ok {
-				if addrs, ok := vm["brokerAddrs"].(map[string]any); ok {
-					if addr, ok := addrs["0"].(string); ok && addr != "" {
-						return c.invokeBrokerDecoded(ctx, c.rewriteBrokerAddr(addr), requestCodeGetConsumerConnectionList, map[string]any{"consumerGroup": consumerGroup}, nil)
-					}
-				}
-			}
+	for _, broker := range cluster.BrokerAddrTable {
+		if addr := broker.BrokerAddrs["0"]; addr != "" {
+			return c.invokeBrokerDecoded(ctx, c.rewriteBrokerAddr(addr), requestCodeGetConsumerConnectionList, map[string]any{"consumerGroup": consumerGroup}, nil)
 		}
 	}
 	return nil, errNoBrokerFromRoute

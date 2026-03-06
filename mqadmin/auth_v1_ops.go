@@ -3,34 +3,39 @@ package mqadmin
 import (
 	"context"
 	"encoding/json"
-	"strconv"
+	"errors"
+	"fmt"
 	"strings"
 )
 
-func (c *client) GetBrokerClusterAclInfo(ctx context.Context, brokerAddr string) (*AclInfoV1, error) {
-	resp, err := c.invokeBroker(ctx, brokerAddr, newCommand(requestCodeGetBrokerClusterAclConfig, nil))
-	if err != nil {
-		return nil, err
-	}
-	out := &AclInfoV1{}
-	if len(resp.Body) == 0 {
-		out.GlobalWhiteAddrs = []string{}
-		out.PlainAccessConfigs = []PlainAccessConfig{}
-		return out, nil
-	}
-	if err := json.Unmarshal(resp.Body, out); err != nil {
-		return nil, err
-	}
-	if out.GlobalWhiteAddrs == nil {
-		out.GlobalWhiteAddrs = []string{}
-	}
-	if out.PlainAccessConfigs == nil {
-		out.PlainAccessConfigs = []PlainAccessConfig{}
-	}
-	return out, nil
+type AclConfigV1 struct {
+	AccessKey          string
+	SecretKey          string
+	WhiteRemoteAddress string
+	DefaultTopicPerm   string
+	DefaultGroupPerm   string
+	Admin              bool
+	TopicPerms         []string
+	GroupPerms         []string
 }
 
-func (c *client) UpdateAclConfig(ctx context.Context, cfg AclConfigV1) error {
+type AclInfoV1 struct {
+	GlobalWhiteAddrs   []string            `json:"globalWhiteAddrs"`
+	PlainAccessConfigs []PlainAccessConfig `json:"plainAccessConfigs"`
+}
+
+type PlainAccessConfig struct {
+	Admin              bool     `json:"admin"`
+	AccessKey          string   `json:"accessKey"`
+	SecretKey          string   `json:"secretKey"`
+	WhiteRemoteAddress string   `json:"whiteRemoteAddress"`
+	TopicPerms         []string `json:"topicPerms"`
+	GroupPerms         []string `json:"groupPerms"`
+	DefaultTopicPerm   string   `json:"defaultTopicPerm"`
+	DefaultGroupPerm   string   `json:"defaultGroupPerm"`
+}
+
+func (c *client) UpdateAclConfig(ctx context.Context, cfg AclConfigV1, opts ...ScopeOption) error {
 	bodies := toMapString(map[string]any{
 		"accessKey": cfg.AccessKey,
 		"secretKey": cfg.SecretKey,
@@ -53,81 +58,89 @@ func (c *client) UpdateAclConfig(ctx context.Context, cfg AclConfigV1) error {
 	if len(cfg.GroupPerms) > 0 {
 		bodies["groupPerms"] = strings.Join(cfg.GroupPerms, ",")
 	}
-	brokers := c.allBrokerAddrs(ctx)
-	if len(brokers) == 0 {
-		return errNoBrokerFromRoute
-	}
-	for _, brokerAddr := range brokers {
-		if _, err := c.invokeBroker(ctx, brokerAddr, newCommand(requestCodeUpdateAndCreateAclConfig, bodies)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func (c *client) DeleteAclConfig(ctx context.Context, accessKey string) error {
-	brokers := c.allBrokerAddrs(ctx)
-	if len(brokers) == 0 {
-		return errNoBrokerFromRoute
-	}
-	for _, brokerAddr := range brokers {
-		if _, err := c.invokeBroker(ctx, brokerAddr, newCommand(requestCodeDeleteAclConfig, toMapString(map[string]any{"accessKey": accessKey}))); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *client) UpdateGlobalWhiteAddrsConfig(ctx context.Context, addrs []string) error {
-	joined := strings.Join(addrs, ",")
-	brokers := c.allBrokerAddrs(ctx)
-	if len(brokers) == 0 {
-		return errNoBrokerFromRoute
-	}
-	for _, brokerAddr := range brokers {
-		if _, err := c.invokeBroker(ctx, brokerAddr, newCommand(requestCodeUpdateGlobalWhiteAddrsConfig, toMapString(map[string]any{"globalWhiteAddrs": joined}))); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *client) allBrokerAddrs(ctx context.Context) []string {
-	cluster, err := c.ClusterList(ctx)
+	scopeConfig := BuildScopeConfig(opts...)
+	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
 	if err != nil {
-		return nil
+		return fmt.Errorf("resolve brokers failed: %w", err)
 	}
-	set := map[string]struct{}{}
-	table, ok := cluster["brokerAddrTable"].(map[string]any)
-	if !ok {
-		return nil
+
+	for _, brokerAddr := range brokers {
+		_, err = c.invokeBroker(ctx, brokerAddr,
+			newCommand(requestCodeUpdateAndCreateAclConfig, bodies))
+		if err != nil {
+			return err
+		}
 	}
-	for _, v := range table {
-		bm, ok := v.(map[string]any)
-		if !ok {
+	return nil
+}
+
+func (c *client) DeleteAclConfig(ctx context.Context, accessKey string, opts ...ScopeOption) error {
+	scopeConfig := BuildScopeConfig(opts...)
+	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
+	if err != nil {
+		return fmt.Errorf("resolve brokers failed: %w", err)
+	}
+
+	for _, brokerAddr := range brokers {
+		_, err = c.invokeBroker(ctx, brokerAddr,
+			newCommand(requestCodeDeleteAclConfig, toMapString(map[string]any{"accessKey": accessKey})))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *client) UpdateGlobalWhiteAddrsConfig(ctx context.Context, addrs []string, opts ...ScopeOption) error {
+	scopeConfig := BuildScopeConfig(opts...)
+	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
+	if err != nil {
+		return fmt.Errorf("resolve brokers failed: %w", err)
+	}
+
+	joined := strings.Join(addrs, ",")
+	for _, brokerAddr := range brokers {
+		_, err = c.invokeBroker(ctx, brokerAddr,
+			newCommand(requestCodeUpdateGlobalWhiteAddrsConfig, toMapString(map[string]any{"globalWhiteAddrs": joined})))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *client) GetBrokerClusterAclInfo(ctx context.Context, opts ...ScopeOption) (map[string]*AclInfoV1, error) {
+	scopeConfig := BuildScopeConfig(opts...)
+	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
+	if err != nil {
+		return nil, fmt.Errorf("resolve brokers failed: %w", err)
+	}
+
+	var errs error
+	acls := make(map[string]*AclInfoV1, len(brokers))
+
+	for _, brokerAddr := range brokers {
+		resp, err := c.invokeBroker(ctx, brokerAddr, newCommand(requestCodeGetBrokerClusterAclConfig, nil))
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("get acl from broker %s failed: %w", brokerAddr, err))
 			continue
 		}
-		addrs, ok := bm["brokerAddrs"].(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, raw := range addrs {
-			switch t := raw.(type) {
-			case string:
-				if t != "" {
-					set[t] = struct{}{}
-				}
-			case float64:
-				s := strconv.FormatFloat(t, 'f', -1, 64)
-				if s != "" {
-					set[s] = struct{}{}
-				}
+		acl := &AclInfoV1{}
+		if len(resp.Body) != 0 {
+			err = json.Unmarshal(resp.Body, acl)
+			if err != nil {
+				return nil, err
 			}
 		}
+
+		if acl.GlobalWhiteAddrs == nil {
+			acl.GlobalWhiteAddrs = []string{}
+		}
+		if acl.PlainAccessConfigs == nil {
+			acl.PlainAccessConfigs = []PlainAccessConfig{}
+		}
 	}
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	return out
+
+	return acls, nil
 }

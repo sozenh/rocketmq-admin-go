@@ -1,6 +1,16 @@
 package mqadmin
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"sort"
+	"strings"
+)
+
+type StatsAllResult struct {
+	TopicCount int                                   `json:"topicCount"`
+	Topics     map[string]map[string]TopicStatsTable `json:"topics"`
+}
 
 type Options struct {
 	NameServer            []string
@@ -148,57 +158,6 @@ type UpdateTopicPermRequest struct {
 	Perm  int
 }
 
-type UserInfo struct {
-	Username   string `json:"username"`
-	Password   string `json:"password,omitempty"`
-	UserType   string `json:"userType,omitempty"`
-	UserStatus string `json:"userStatus,omitempty"`
-}
-
-type AclInfo struct {
-	Subject  string       `json:"subject"`
-	Policies []PolicyInfo `json:"policies"`
-}
-
-type AclInfoV1 struct {
-	GlobalWhiteAddrs   []string            `json:"globalWhiteAddrs"`
-	PlainAccessConfigs []PlainAccessConfig `json:"plainAccessConfigs"`
-}
-
-type PlainAccessConfig struct {
-	Admin              bool     `json:"admin"`
-	AccessKey          string   `json:"accessKey"`
-	SecretKey          string   `json:"secretKey"`
-	WhiteRemoteAddress string   `json:"whiteRemoteAddress"`
-	TopicPerms         []string `json:"topicPerms"`
-	GroupPerms         []string `json:"groupPerms"`
-	DefaultTopicPerm   string   `json:"defaultTopicPerm"`
-	DefaultGroupPerm   string   `json:"defaultGroupPerm"`
-}
-
-type AclConfigV1 struct {
-	AccessKey          string
-	SecretKey          string
-	WhiteRemoteAddress string
-	DefaultTopicPerm   string
-	DefaultGroupPerm   string
-	Admin              bool
-	TopicPerms         []string
-	GroupPerms         []string
-}
-
-type PolicyInfo struct {
-	PolicyType string            `json:"policyType,omitempty"`
-	Entries    []PolicyEntryInfo `json:"entries"`
-}
-
-type PolicyEntryInfo struct {
-	Resource  string   `json:"resource"`
-	Actions   []string `json:"actions"`
-	SourceIps []string `json:"sourceIps"`
-	Decision  string   `json:"decision"`
-}
-
 type TopicStatsTable struct {
 	OffsetTable map[string]any `json:"offsetTable"`
 }
@@ -241,3 +200,107 @@ var (
 	errEmptyMode            = errors.New("mqadmin: consume mode is required")
 	errUnsupportedMode      = errors.New("mqadmin: consume mode only supports PULL/POP")
 )
+
+type ScopeOption func(*ScopeConfig)
+
+type ScopeConfig struct {
+	brokers  []string
+	clusters []string
+}
+
+func WithBroker(addrs ...string) ScopeOption {
+	return func(cfg *ScopeConfig) {
+		for _, addr := range addrs {
+			addr = strings.TrimSpace(addr)
+			if addr != "" {
+				cfg.brokers = append(cfg.brokers, addr)
+			}
+		}
+	}
+}
+
+func WithCluster(names ...string) ScopeOption {
+	return func(cfg *ScopeConfig) {
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				cfg.clusters = append(cfg.clusters, name)
+			}
+		}
+	}
+}
+
+func BuildScopeConfig(opts ...ScopeOption) ScopeConfig {
+	cfg := ScopeConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	return cfg
+}
+
+func uniqueStrings(in []string) []string {
+	set := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v == "" {
+			continue
+		}
+		if _, ok := set[v]; ok {
+			continue
+		}
+		set[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (cfg *ScopeConfig) getBrokerAddrs(ctx context.Context, mqadmin Admin, includeSlaves bool) ([]string, error) {
+	if len(cfg.brokers) == 0 && len(cfg.clusters) == 0 {
+		return nil, errEmptyBrokerAddr
+	}
+
+	brokerAddrs := append([]string(nil), cfg.brokers...)
+
+	if len(cfg.clusters) > 0 {
+		clusterInfo, err := mqadmin.ClusterList(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, clusterName := range cfg.clusters {
+			brokerNames := clusterInfo.ClusterAddrTable[clusterName]
+
+			for _, brokerName := range brokerNames {
+				broker := clusterInfo.BrokerAddrTable[brokerName]
+				master := broker.BrokerAddrs["0"]
+				if master != "" {
+					brokerAddrs = append(brokerAddrs, master)
+				}
+
+				if includeSlaves {
+					for idx, addr := range broker.BrokerAddrs {
+						if addr != "" && idx != "0" {
+							brokerAddrs = append(brokerAddrs, addr)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	brokerAddrs = uniqueStrings(brokerAddrs)
+	if len(brokerAddrs) == 0 {
+		return nil, errNoBrokerFromRoute
+	}
+	return brokerAddrs, nil
+}
+
+type ScopeSelector struct {
+	opts []ScopeOption
+}
+
+func NewScopeSelector(opts ...ScopeOption) ScopeSelector {
+	return ScopeSelector{opts: append([]ScopeOption(nil), opts...)}
+}

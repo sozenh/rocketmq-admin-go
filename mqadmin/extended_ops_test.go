@@ -42,10 +42,10 @@ func TestUpdateStaticTopicValidation(t *testing.T) {
 func TestCopyValidation(t *testing.T) {
 	c := &client{}
 	ctx := context.Background()
-	if err := c.CopyUsers(ctx, "", "b", ""); err != errEmptyBrokerAddr {
+	if err := c.CopyUsers(ctx, "", NewScopeSelector(), NewScopeSelector(WithBroker("b"))); err != errEmptyBrokerAddr {
 		t.Fatalf("expected errEmptyBrokerAddr for CopyUsers, got %v", err)
 	}
-	if err := c.CopyAcls(ctx, "a", "", ""); err != errEmptyBrokerAddr {
+	if err := c.CopyAcls(ctx, "", NewScopeSelector(WithBroker("a")), NewScopeSelector()); err != errEmptyBrokerAddr {
 		t.Fatalf("expected errEmptyBrokerAddr for CopyAcls, got %v", err)
 	}
 }
@@ -141,11 +141,10 @@ func TestStatsAllSingleTopic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StatsAll failed: %v", err)
 	}
-	if out["topicCount"].(int) != 1 {
-		t.Fatalf("expected topicCount=1, got %+v", out["topicCount"])
+	if out.TopicCount != 1 {
+		t.Fatalf("expected topicCount=1, got %+v", out.TopicCount)
 	}
-	topics, ok := out["topics"].(map[string]any)
-	if !ok || topics["T"] == nil {
+	if out.Topics["T"] == nil {
 		t.Fatalf("missing topic stats: %+v", out)
 	}
 }

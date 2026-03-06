@@ -1,5 +1,3 @@
-//go:build integration
-
 package mqadmin
 
 import (
@@ -129,11 +127,11 @@ func TestIntegrationAuthProbe(t *testing.T) {
 	defer cancel()
 
 	probeUser := UserInfo{Username: "mqadmin_go_probe", Password: "P@ssw0rd", UserType: "NORMAL"}
-	err = cli.CreateUser(ctx, broker0, probeUser)
+	err = cli.CreateUser(ctx, probeUser, WithBroker(broker0))
 	if err != nil {
 		t.Logf("auth create user probe failed (likely ACL/Auth config required): %v", err)
 		return
 	}
-	_ = cli.DeleteUser(ctx, broker0, probeUser.Username)
+	_ = cli.DeleteUser(ctx, probeUser.Username, WithBroker(broker0))
 	fmt.Println("auth probe succeeded")
 }

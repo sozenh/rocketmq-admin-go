@@ -8,6 +8,29 @@ import (
 )
 
 type Admin interface {
+	ClusterList(ctx context.Context) (*ClusterInfo, error)
+	ClusterSendMsgRT(ctx context.Context, clusterName string) (*ClusterSendMsgRTResult, error)
+
+	CreateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption) error
+	UpdateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption) error
+	DeleteAcl(ctx context.Context, subject, resource, policyType string, opts ...ScopeOption) error
+	GetAcl(ctx context.Context, subject string, opts ...ScopeOption) (map[string]*AclInfo, error)
+	ListAcl(ctx context.Context, subjectFilter, resourceFilter string, opts ...ScopeOption) (map[string][]AclInfo, error)
+	CopyAcls(ctx context.Context, subject string, source ScopeSelector, target ScopeSelector) error
+
+	CreateUser(ctx context.Context, user UserInfo, opts ...ScopeOption) error
+	UpdateUser(ctx context.Context, user UserInfo, opts ...ScopeOption) error
+	DeleteUser(ctx context.Context, username string, opts ...ScopeOption) error
+	GetUser(ctx context.Context, username string, opts ...ScopeOption) (map[string]*UserInfo, error)
+	ListUser(ctx context.Context, filter string, opts ...ScopeOption) (map[string][]UserInfo, error)
+	CopyUsers(ctx context.Context, username string, source ScopeSelector, target ScopeSelector) error
+
+	// ACL 1.0
+	UpdateAclConfig(ctx context.Context, cfg AclConfigV1, opts ...ScopeOption) error
+	DeleteAclConfig(ctx context.Context, accessKey string, opts ...ScopeOption) error
+	UpdateGlobalWhiteAddrsConfig(ctx context.Context, addrs []string, opts ...ScopeOption) error
+	GetBrokerClusterAclInfo(ctx context.Context, opts ...ScopeOption) (map[string]*AclInfoV1, error)
+
 	UpdateTopic(ctx context.Context, req CreateTopicRequest) error
 	UpdateTopicList(ctx context.Context, brokerAddr string, topics []CreateTopicRequest) error
 	UpdateTopicPerm(ctx context.Context, req UpdateTopicPermRequest) error
@@ -42,8 +65,6 @@ type Admin interface {
 	AddWritePerm(ctx context.Context, brokerName string, namesrvs []string) error
 	GetNamesrvConfig(ctx context.Context, namesrvs []string) (map[string]map[string]string, error)
 	UpdateNamesrvConfig(ctx context.Context, namesrvs []string, properties map[string]string) error
-	ClusterList(ctx context.Context) (map[string]any, error)
-	ClusterSendMsgRT(ctx context.Context, clusterName string) (map[string]any, error)
 	AddBroker(ctx context.Context, controllerAddr string, req BrokerMembershipRequest) error
 	RemoveBroker(ctx context.Context, controllerAddr string, req BrokerMembershipRequest) error
 	ResetMasterFlushOffset(ctx context.Context, brokerAddr string, offset int64) error
@@ -92,30 +113,13 @@ type Admin interface {
 	FetchPublishMessageQueues(ctx context.Context, topic string) ([]MessageQueue, error)
 	FetchClusterList(ctx context.Context, topic string) ([]string, error)
 
-	CreateUser(ctx context.Context, brokerAddr string, user UserInfo) error
-	UpdateUser(ctx context.Context, brokerAddr string, user UserInfo) error
-	DeleteUser(ctx context.Context, brokerAddr, username string) error
-	GetUser(ctx context.Context, brokerAddr, username string) (*UserInfo, error)
-	ListUser(ctx context.Context, brokerAddr, filter string) ([]UserInfo, error)
-
-	CreateAcl(ctx context.Context, brokerAddr string, acl AclInfo) error
-	UpdateAcl(ctx context.Context, brokerAddr string, acl AclInfo) error
-	DeleteAcl(ctx context.Context, brokerAddr, subject, resource, policyType string) error
-	GetAcl(ctx context.Context, brokerAddr, subject string) (*AclInfo, error)
-	ListAcl(ctx context.Context, brokerAddr, subjectFilter, resourceFilter string) ([]AclInfo, error)
-	GetBrokerClusterAclInfo(ctx context.Context, brokerAddr string) (*AclInfoV1, error)
-	UpdateAclConfig(ctx context.Context, cfg AclConfigV1) error
-	DeleteAclConfig(ctx context.Context, accessKey string) error
-	UpdateGlobalWhiteAddrsConfig(ctx context.Context, addrs []string) error
-	CopyUsers(ctx context.Context, sourceBroker, targetBroker, username string) error
-	CopyAcls(ctx context.Context, sourceBroker, targetBroker, subject string) error
+	StatsAll(ctx context.Context, topic string) (*StatsAllResult, error)
 	GetBrokerLiteInfo(ctx context.Context, brokerAddr string) (map[string]any, error)
 	GetParentTopicInfo(ctx context.Context, brokerAddr, parentTopic string) (map[string]any, error)
 	GetLiteTopicInfo(ctx context.Context, req LiteTopicRequest) (map[string]any, error)
 	GetLiteClientInfo(ctx context.Context, req LiteTopicRequest) (map[string]any, error)
 	GetLiteGroupInfo(ctx context.Context, req LiteTopicRequest) (map[string]any, error)
 	TriggerLiteDispatch(ctx context.Context, req LiteTopicRequest) error
-	StatsAll(ctx context.Context, topic string) (map[string]any, error)
 
 	CreateTopic(ctx context.Context, req CreateTopicRequest) error
 	FetchAllTopicList(ctx context.Context) (*TopicList, error)
