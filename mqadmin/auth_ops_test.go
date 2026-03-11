@@ -107,7 +107,11 @@ func TestCreateAclRollbackOnBrokerFailure(t *testing.T) {
 	defer stop2()
 
 	c := &client{timeout: 2 * time.Second}
-	err := c.CreateAcl(context.Background(), AclInfo{Subject: "User:rollback-acl"}, WithBroker(b1, b2))
+	err := c.CreateAcl(context.Background(),
+		WithSubjectUser("rollback-acl"),
+		WithResourceAny([]ActionType{ActionTypeAll}, DecisionTypeAllow),
+		WithScopeBroker(b1, b2),
+	)
 	if err == nil {
 		t.Fatal("expected create acl error")
 	}
@@ -148,7 +152,11 @@ func TestCreateAclRollbackFailureIsReported(t *testing.T) {
 	defer stop2()
 
 	c := &client{timeout: 2 * time.Second}
-	err := c.CreateAcl(context.Background(), AclInfo{Subject: "User:rollback-acl-fail"}, WithBroker(b1, b2))
+	err := c.CreateAcl(context.Background(),
+		WithSubjectUser("rollback-acl-fail"),
+		WithResourceAny([]ActionType{ActionTypeAll}, DecisionTypeAllow),
+		WithScopeBroker(b1, b2),
+	)
 	if err == nil {
 		t.Fatal("expected create acl error")
 	}
@@ -267,7 +275,11 @@ func TestUpdateAclRollbackOnBrokerFailure(t *testing.T) {
 	defer stop2()
 
 	c := &client{timeout: 2 * time.Second}
-	err := c.UpdateAcl(context.Background(), AclInfo{Subject: "User:rollback-update-acl", Policies: []PolicyInfo{}}, WithBroker(b1, b2))
+	err := c.UpdateAcl(context.Background(),
+		WithSubjectUser("rollback-update-acl"),
+		WithResourceAny([]ActionType{ActionTypeAll}, DecisionTypeAllow),
+		WithScopeBroker(b1, b2),
+	)
 	if err == nil {
 		t.Fatal("expected update acl error")
 	}

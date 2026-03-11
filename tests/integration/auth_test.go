@@ -59,16 +59,11 @@ func uniqueAuthName(prefix string) string {
 	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
 }
 
-func buildACL(subject, resource string) mqadmin.AclInfo {
-	entry := mqadmin.PolicyEntryInfo{
-		Resource:  resource,
-		Actions:   []string{"PUB", "SUB"},
-		SourceIps: []string{"127.0.0.1"},
-		Decision:  "ALLOW",
-	}
-	return mqadmin.AclInfo{
-		Subject:  subject,
-		Policies: []mqadmin.PolicyInfo{{Entries: []mqadmin.PolicyEntryInfo{entry}}},
+func buildACLOptions(username, topic string, brokers []string) []mqadmin.AclOption {
+	return []mqadmin.AclOption{
+		mqadmin.WithSubjectUser(username),
+		mqadmin.WithResourceTopic(topic, []mqadmin.ActionType{mqadmin.ActionTypePub, mqadmin.ActionTypeSub}, mqadmin.DecisionTypeAllow, "127.0.0.1"),
+		mqadmin.WithScopeBroker(brokers...),
 	}
 }
 
@@ -254,23 +249,23 @@ func TestIntegrationAuthCreateAcl(t *testing.T) {
 	}
 
 	subject := "User:" + username
-	resource := "Topic:" + uniqueAuthName("mqadmin_it_create_acl_topic")
-	acl := buildACL(subject, resource)
+	topic := uniqueAuthName("mqadmin_it_create_acl_topic")
+	resource := "Topic:" + topic
 	t.Cleanup(func() {
 		_ = env.cli.DeleteAcl(env.ctx, subject, resource, "", mqadmin.WithBroker(env.broker...))
 		_ = env.cli.DeleteUser(env.ctx, username, mqadmin.WithBroker(env.broker...))
 	})
 
 	t.Run("create_acl_for_existing_user", func(t *testing.T) {
-		err := env.cli.CreateAcl(env.ctx, acl, mqadmin.WithBroker(env.broker...))
+		err := env.cli.CreateAcl(env.ctx, buildACLOptions(username, topic, env.broker)...)
 		if err != nil {
 			t.Fatalf("CreateAcl failed: %v", err)
 		}
 	})
 
 	t.Run("create_acl_for_non_existing_user", func(t *testing.T) {
-		missingSubject := "User:" + uniqueAuthName("mqadmin_it_missing_subject")
-		err := env.cli.CreateAcl(env.ctx, buildACL(missingSubject, resource), mqadmin.WithBroker(env.broker...))
+		missingUser := uniqueAuthName("mqadmin_it_missing_subject")
+		err := env.cli.CreateAcl(env.ctx, buildACLOptions(missingUser, topic, env.broker)...)
 		if err == nil {
 			t.Fatal("expected CreateAcl to fail for non-existing subject, got nil")
 		}
@@ -287,28 +282,32 @@ func TestIntegrationAuthUpdateAcl(t *testing.T) {
 	}
 
 	subject := "User:" + username
-	resource := "Topic:" + uniqueAuthName("mqadmin_it_update_acl_topic")
-	err = env.cli.CreateAcl(env.ctx, buildACL(subject, resource), mqadmin.WithBroker(env.broker...))
+	topic := uniqueAuthName("mqadmin_it_update_acl_topic")
+	resource := "Topic:" + topic
+	err = env.cli.CreateAcl(env.ctx, buildACLOptions(username, topic, env.broker)...)
 	if err != nil {
 		t.Fatalf("pre-create acl failed: %v", err)
 	}
-
-	updated := mqadmin.AclInfo{Subject: subject, Policies: []mqadmin.PolicyInfo{{Entries: []mqadmin.PolicyEntryInfo{{Resource: resource, Actions: []string{"SUB"}, SourceIps: []string{"127.0.0.1"}, Decision: "ALLOW"}}}}}
+	updated := []mqadmin.AclOption{
+		mqadmin.WithSubjectUser(username),
+		mqadmin.WithResourceTopic(topic, []mqadmin.ActionType{mqadmin.ActionTypeSub}, mqadmin.DecisionTypeAllow, "127.0.0.1"),
+		mqadmin.WithScopeBroker(env.broker...),
+	}
 	t.Cleanup(func() {
 		_ = env.cli.DeleteAcl(env.ctx, subject, resource, "", mqadmin.WithBroker(env.broker...))
 		_ = env.cli.DeleteUser(env.ctx, username, mqadmin.WithBroker(env.broker...))
 	})
 
 	t.Run("update_existing_acl", func(t *testing.T) {
-		err := env.cli.UpdateAcl(env.ctx, updated, mqadmin.WithBroker(env.broker...))
+		err := env.cli.UpdateAcl(env.ctx, updated...)
 		if err != nil {
 			t.Fatalf("UpdateAcl failed: %v", err)
 		}
 	})
 
 	t.Run("update_non_existing_acl", func(t *testing.T) {
-		missingSubject := "User:" + uniqueAuthName("mqadmin_it_update_acl_missing_user")
-		err := env.cli.UpdateAcl(env.ctx, buildACL(missingSubject, resource), mqadmin.WithBroker(env.broker...))
+		missingUser := uniqueAuthName("mqadmin_it_update_acl_missing_user")
+		err := env.cli.UpdateAcl(env.ctx, buildACLOptions(missingUser, topic, env.broker)...)
 		if err == nil {
 			t.Fatal("expected UpdateAcl to fail for non-existing subject, got nil")
 		}
@@ -322,8 +321,9 @@ func TestIntegrationAuthDeleteAcl(t *testing.T) {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
 	subject := "User:" + username
-	resource := "Topic:" + uniqueAuthName("mqadmin_it_delete_acl_topic")
-	if err := env.cli.CreateAcl(env.ctx, buildACL(subject, resource), mqadmin.WithBroker(env.broker...)); err != nil {
+	topic := uniqueAuthName("mqadmin_it_delete_acl_topic")
+	resource := "Topic:" + topic
+	if err := env.cli.CreateAcl(env.ctx, buildACLOptions(username, topic, env.broker)...); err != nil {
 		t.Fatalf("pre-create acl failed: %v", err)
 	}
 	t.Cleanup(func() {
@@ -349,11 +349,12 @@ func TestIntegrationAuthGetAcl(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_get_acl_user")
 	subject := "User:" + username
-	resource := "Topic:" + uniqueAuthName("mqadmin_it_get_acl_topic")
+	topic := uniqueAuthName("mqadmin_it_get_acl_topic")
+	resource := "Topic:" + topic
 	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}, mqadmin.WithBroker(env.broker...)); err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
-	if err := env.cli.CreateAcl(env.ctx, buildACL(subject, resource), mqadmin.WithBroker(env.broker...)); err != nil {
+	if err := env.cli.CreateAcl(env.ctx, buildACLOptions(username, topic, env.broker)...); err != nil {
 		t.Fatalf("pre-create acl failed: %v", err)
 	}
 	t.Cleanup(func() {
@@ -367,7 +368,7 @@ func TestIntegrationAuthGetAcl(t *testing.T) {
 			t.Fatalf("GetAcl existing failed: %v", err)
 		}
 		for _, broker := range env.broker {
-			if acls[broker] == nil || !strings.EqualFold(acls[broker].Subject, subject) {
+			if acls[broker] == nil || !strings.EqualFold(acls[broker].SubjectType+":"+acls[broker].SubjectName, subject) {
 				t.Fatalf("GetAcl existing unexpected result: %+v", acls)
 			}
 		}
@@ -386,11 +387,12 @@ func TestIntegrationAuthListAcl(t *testing.T) {
 	env := setupAuthIntegrationEnv(t)
 	username := uniqueAuthName("mqadmin_it_list_acl_user")
 	subject := "User:" + username
-	resource := "Topic:" + uniqueAuthName("mqadmin_it_list_acl_topic")
+	topic := uniqueAuthName("mqadmin_it_list_acl_topic")
+	resource := "Topic:" + topic
 	if err := env.cli.CreateUser(env.ctx, mqadmin.UserInfo{Username: username, Password: "P@ssw0rd", UserType: UserTypeNormal}, mqadmin.WithBroker(env.broker...)); err != nil {
 		t.Fatalf("pre-create user failed: %v", err)
 	}
-	if err := env.cli.CreateAcl(env.ctx, buildACL(subject, resource), mqadmin.WithBroker(env.broker...)); err != nil {
+	if err := env.cli.CreateAcl(env.ctx, buildACLOptions(username, topic, env.broker)...); err != nil {
 		t.Fatalf("pre-create acl failed: %v", err)
 	}
 	t.Cleanup(func() {
@@ -406,7 +408,7 @@ func TestIntegrationAuthListAcl(t *testing.T) {
 		for _, broker := range env.broker {
 			foundACL := false
 			for _, a := range aclsByBroker[broker] {
-				if strings.EqualFold(a.Subject, subject) {
+				if strings.EqualFold(a.SubjectType+":"+a.SubjectName, subject) {
 					foundACL = true
 					break
 				}
@@ -427,7 +429,7 @@ func TestIntegrationAuthListAcl(t *testing.T) {
 		for _, broker := range env.broker {
 			foundACL := false
 			for _, a := range aclsByBroker[broker] {
-				if strings.EqualFold(a.Subject, subject) {
+				if strings.EqualFold(a.SubjectType+":"+a.SubjectName, subject) {
 					foundACL = true
 					break
 				}
