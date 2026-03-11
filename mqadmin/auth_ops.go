@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type UserType string
@@ -13,6 +14,50 @@ const (
 	UserTypeSuper  UserType = "Super"
 	UserTypeNormal UserType = "Normal"
 )
+
+type ActionType string
+
+const (
+	ActionTypeAll    ActionType = "All"
+	ActionTypePub    ActionType = "Pub"
+	ActionTypeSub    ActionType = "Sub"
+	ActionTypeGet    ActionType = "Get"
+	ActionTypeList   ActionType = "List"
+	ActionTypeCreate ActionType = "Create"
+	ActionTypeUpdate ActionType = "Update"
+	ActionTypeDelete ActionType = "Delete"
+)
+
+type DecisionType string
+
+const (
+	DecisionTypeDeny  DecisionType = "Deny"
+	DecisionTypeAllow DecisionType = "Allow"
+)
+
+type ResourceType string
+
+const (
+	ResourceTypeAny       ResourceType = "Any"
+	ResourceTypeTopic     ResourceType = "Topic"
+	ResourceTypeGroup     ResourceType = "Group"
+	ResourceTypeCluster   ResourceType = "Cluster"
+	ResourceTypeNamespace ResourceType = "Namespace"
+)
+
+func formatResource(kind ResourceType, name string) (string, error) {
+	if kind == ResourceTypeAny {
+		return "*", nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("mqadmin: resource name is required")
+	}
+	if kind == "" {
+		return "", fmt.Errorf("mqadmin: resource type is required")
+	}
+	return string(kind) + ":" + name, nil
+}
 
 type UserInfo struct {
 	Username   string   `json:"username"`
@@ -32,10 +77,106 @@ type PolicyInfo struct {
 }
 
 type PolicyEntryInfo struct {
-	Resource  string   `json:"resource"`
-	Actions   []string `json:"actions"`
-	SourceIps []string `json:"sourceIps"`
-	Decision  string   `json:"decision"`
+	Resource  string       `json:"resource"`
+	Actions   []ActionType `json:"actions"`
+	SourceIps []string     `json:"sourceIps"`
+	Decision  DecisionType `json:"decision"`
+}
+
+type aclConfig struct {
+	acl   AclInfo
+	scope []ScopeOption
+}
+
+type AclOption func(*aclConfig) error
+
+func BuildAclInfo(opts ...AclOption) (AclInfo, []ScopeOption, error) {
+	state := &aclConfig{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(state); err != nil {
+			return AclInfo{}, nil, err
+		}
+	}
+	if state.acl.Subject == "" {
+		return AclInfo{}, nil, errEmptySubject
+	}
+	if len(state.acl.Policies) == 0 {
+		return AclInfo{}, nil, fmt.Errorf("mqadmin: at least one acl entry is required")
+	}
+	return state.acl, append([]ScopeOption(nil), state.scope...), nil
+}
+
+func WithScopeBroker(addrs ...string) AclOption {
+	return WithScopeOptions(WithBroker(addrs...))
+}
+
+func WithScopeCluster(names ...string) AclOption {
+	return WithScopeOptions(WithCluster(names...))
+}
+
+func WithScopeOptions(opts ...ScopeOption) AclOption {
+	return func(state *aclConfig) error {
+		state.scope = append(state.scope, opts...)
+		return nil
+	}
+}
+
+func WithSubjectUser(username string) AclOption {
+	return WithSubject("User", username)
+}
+
+func WithSubject(subjectType, subjectName string) AclOption {
+	return func(state *aclConfig) error {
+		subjectName = strings.TrimSpace(subjectName)
+		if subjectName == "" {
+			return errEmptySubject
+		}
+		state.acl.Subject = subjectType + ":" + subjectName
+		return nil
+	}
+}
+
+func WithResourceAny(actions []ActionType, decision DecisionType, sourceIPs ...string) AclOption {
+	return WithResource(ResourceTypeAny, "*", actions, decision, sourceIPs...)
+}
+
+func WithResourceTopic(topic string, actions []ActionType, decision DecisionType, sourceIPs ...string) AclOption {
+	return WithResource(ResourceTypeTopic, topic, actions, decision, sourceIPs...)
+}
+
+func WithResourceGroup(group string, actions []ActionType, decision DecisionType, sourceIPs ...string) AclOption {
+	return WithResource(ResourceTypeGroup, group, actions, decision, sourceIPs...)
+}
+
+func WithResourceCluster(cluster string, actions []ActionType, decision DecisionType, sourceIPs ...string) AclOption {
+	return WithResource(ResourceTypeCluster, cluster, actions, decision, sourceIPs...)
+}
+
+func WithResourceNamespace(namespace string, actions []ActionType, decision DecisionType, sourceIPs ...string) AclOption {
+	return WithResource(ResourceTypeNamespace, namespace, actions, decision, sourceIPs...)
+}
+
+func WithResource(kind ResourceType, name string, actions []ActionType, decision DecisionType, sourceIPs ...string) AclOption {
+	return func(state *aclConfig) error {
+		if len(actions) == 0 {
+			return fmt.Errorf("mqadmin: actions is required")
+		}
+		resource, err := formatResource(kind, name)
+		if err != nil {
+			return err
+		}
+		entry := PolicyEntryInfo{
+			Resource:  resource,
+			Actions:   append([]ActionType(nil), actions...),
+			SourceIps: append([]string(nil), sourceIPs...),
+			Decision:  decision,
+		}
+		state.acl.Policies = append(state.acl.Policies, PolicyInfo{Entries: []PolicyEntryInfo{entry}})
+		return nil
+	}
 }
 
 func (c *client) CreateUser(ctx context.Context, user UserInfo, opts ...ScopeOption) error {
@@ -195,12 +336,17 @@ func (c *client) ListUser(ctx context.Context, filter string, opts ...ScopeOptio
 	return users, errs
 }
 
-func (c *client) CreateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption) error {
+func (c *client) CreateAcl(ctx context.Context, opts ...AclOption) error {
+	acl, scope, err := BuildAclInfo(opts...)
+	if err != nil {
+		return err
+	}
+
 	if acl.Subject == "" {
 		return errEmptySubject
 	}
 
-	scopeConfig := BuildScopeConfig(opts...)
+	scopeConfig := BuildScopeConfig(scope...)
 	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
 	if err != nil {
 		return fmt.Errorf("resolve brokers failed: %w", err)
@@ -226,18 +372,23 @@ func (c *client) CreateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption
 	return nil
 }
 
-func (c *client) UpdateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption) error {
+func (c *client) UpdateAcl(ctx context.Context, opts ...AclOption) error {
+	acl, scope, err := BuildAclInfo(opts...)
+	if err != nil {
+		return err
+	}
+
 	if acl.Subject == "" {
 		return errEmptySubject
 	}
 
-	scopeConfig := BuildScopeConfig(opts...)
+	scopeConfig := BuildScopeConfig(scope...)
 	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
 	if err != nil {
 		return fmt.Errorf("resolve brokers failed: %w", err)
 	}
 
-	prevAcls, prevErr := c.GetAcl(ctx, acl.Subject, opts...)
+	prevAcls, prevErr := c.GetAcl(ctx, acl.Subject, scope...)
 	if prevErr != nil {
 		return fmt.Errorf("prefetch current state failed: %w", prevErr)
 	}
@@ -252,7 +403,7 @@ func (c *client) UpdateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption
 				if prevAcl == nil {
 					continue
 				}
-				if revertErr := c.updateAclOnBroker(ctx, *prevAcl, updatedOn[i]); revertErr != nil {
+				if revertErr := c.updateAclOnBroker(ctx, *prevAcl.AclInfo, updatedOn[i]); revertErr != nil {
 					rollbackErr = errors.Join(rollbackErr, fmt.Errorf("broker %s: %w", updatedOn[i], revertErr))
 				}
 			}
@@ -292,7 +443,7 @@ func (c *client) DeleteAcl(ctx context.Context, subject, resource, policyType st
 				if prevAcl == nil {
 					continue
 				}
-				if revertErr := c.createAclOnBroker(ctx, *prevAcl, deletedOn[i]); revertErr != nil {
+				if revertErr := c.createAclOnBroker(ctx, *prevAcl.AclInfo, deletedOn[i]); revertErr != nil {
 					rollbackErr = errors.Join(rollbackErr, fmt.Errorf("broker %s: %w", deletedOn[i], revertErr))
 				}
 			}
@@ -306,7 +457,7 @@ func (c *client) DeleteAcl(ctx context.Context, subject, resource, policyType st
 	return nil
 }
 
-func (c *client) GetAcl(ctx context.Context, subject string, opts ...ScopeOption) (map[string]*AclInfo, error) {
+func (c *client) GetAcl(ctx context.Context, subject string, opts ...ScopeOption) (map[string]*ParsedAclInfo, error) {
 	if subject == "" {
 		return nil, errEmptySubject
 	}
@@ -318,11 +469,12 @@ func (c *client) GetAcl(ctx context.Context, subject string, opts ...ScopeOption
 	}
 
 	var errs error
-	acls := make(map[string]*AclInfo, len(brokers))
+	acls := make(map[string]*ParsedAclInfo, len(brokers))
 	for _, brokerAddr := range brokers {
 		acl, err := c.getAclFromBroker(ctx, subject, brokerAddr)
 		if err == nil {
-			acls[brokerAddr] = acl
+			aclInfo := ParseAclInfo(acl)
+			acls[brokerAddr] = &aclInfo
 		} else {
 			errs = errors.Join(errs, fmt.Errorf("get acl %q from broker %s failed: %w", subject, brokerAddr, err))
 		}
@@ -331,7 +483,7 @@ func (c *client) GetAcl(ctx context.Context, subject string, opts ...ScopeOption
 	return acls, errs
 }
 
-func (c *client) ListAcl(ctx context.Context, subjectFilter, resourceFilter string, opts ...ScopeOption) (map[string][]AclInfo, error) {
+func (c *client) ListAcl(ctx context.Context, subjectFilter, resourceFilter string, opts ...ScopeOption) (map[string][]ParsedAclInfo, error) {
 	scopeConfig := BuildScopeConfig(opts...)
 	brokers, err := scopeConfig.getBrokerAddrs(ctx, c, true)
 	if err != nil {
@@ -339,11 +491,15 @@ func (c *client) ListAcl(ctx context.Context, subjectFilter, resourceFilter stri
 	}
 
 	var errs error
-	acls := make(map[string][]AclInfo, len(brokers))
+	acls := make(map[string][]ParsedAclInfo, len(brokers))
 	for _, brokerAddr := range brokers {
 		brokerAcls, err := c.listAclFromBroker(ctx, subjectFilter, resourceFilter, brokerAddr)
 		if err == nil {
-			acls[brokerAddr] = brokerAcls
+			var aclInfos []ParsedAclInfo
+			for _, brokerAcl := range brokerAcls {
+				aclInfos = append(aclInfos, ParseAclInfo(&brokerAcl))
+			}
+			acls[brokerAddr] = aclInfos
 		} else {
 			errs = errors.Join(errs, fmt.Errorf("list acl from broker %s failed: %w", brokerAddr, err))
 		}
@@ -660,4 +816,74 @@ func (c *client) listAclFromBroker(ctx context.Context, subjectFilter, resourceF
 		return nil, err
 	}
 	return acls, nil
+}
+
+type ParsedAclEntry struct {
+	ResourceType ResourceType
+	ResourceName string
+	Actions      []ActionType
+	SourceIps    []string
+	Decision     DecisionType
+	PolicyType   string
+}
+
+type ParsedAclInfo struct {
+	AclInfo     *AclInfo
+	SubjectType string
+	SubjectName string
+	Any         []ParsedAclEntry
+	Topics      []ParsedAclEntry
+	Groups      []ParsedAclEntry
+	Clusters    []ParsedAclEntry
+	Namespaces  []ParsedAclEntry
+	Others      []ParsedAclEntry
+}
+
+func splitTypedField(input string) (string, string) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(input, ":", 2)
+	if len(parts) != 2 {
+		return "", input
+	}
+	return parts[0], parts[1]
+}
+
+func ParseAclInfo(acl *AclInfo) ParsedAclInfo {
+	subjectType, subjectName := splitTypedField(acl.Subject)
+	parsed := ParsedAclInfo{
+		AclInfo:     acl,
+		SubjectType: subjectType,
+		SubjectName: subjectName,
+	}
+	for _, p := range acl.Policies {
+		for _, e := range p.Entries {
+			kind, name := splitTypedField(e.Resource)
+			entry := ParsedAclEntry{
+				ResourceType: ResourceType(kind),
+				ResourceName: name,
+				Actions:      append([]ActionType(nil), e.Actions...),
+				SourceIps:    append([]string(nil), e.SourceIps...),
+				Decision:     e.Decision,
+				PolicyType:   p.PolicyType,
+			}
+			switch ResourceType(kind) {
+			case ResourceTypeTopic:
+				parsed.Topics = append(parsed.Topics, entry)
+			case ResourceTypeGroup:
+				parsed.Groups = append(parsed.Groups, entry)
+			case ResourceTypeCluster:
+				parsed.Clusters = append(parsed.Clusters, entry)
+			case ResourceTypeNamespace:
+				parsed.Namespaces = append(parsed.Namespaces, entry)
+			case ResourceTypeAny:
+				parsed.Any = append(parsed.Any, entry)
+			default:
+				parsed.Others = append(parsed.Others, entry)
+			}
+		}
+	}
+	return parsed
 }

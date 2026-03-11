@@ -11,11 +11,11 @@ type Admin interface {
 	ClusterList(ctx context.Context) (*ClusterInfo, error)
 	ClusterSendMsgRT(ctx context.Context, clusterName string) (*ClusterSendMsgRTResult, error)
 
-	CreateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption) error
-	UpdateAcl(ctx context.Context, acl AclInfo, opts ...ScopeOption) error
+	CreateAcl(ctx context.Context, opts ...AclOption) error
+	UpdateAcl(ctx context.Context, opts ...AclOption) error
 	DeleteAcl(ctx context.Context, subject, resource, policyType string, opts ...ScopeOption) error
-	GetAcl(ctx context.Context, subject string, opts ...ScopeOption) (map[string]*AclInfo, error)
-	ListAcl(ctx context.Context, subjectFilter, resourceFilter string, opts ...ScopeOption) (map[string][]AclInfo, error)
+	GetAcl(ctx context.Context, subject string, opts ...ScopeOption) (map[string]*ParsedAclInfo, error)
+	ListAcl(ctx context.Context, subjectFilter, resourceFilter string, opts ...ScopeOption) (map[string][]ParsedAclInfo, error)
 	CopyAcls(ctx context.Context, subject string, source ScopeSelector, target ScopeSelector) error
 
 	CreateUser(ctx context.Context, user UserInfo, opts ...ScopeOption) error
